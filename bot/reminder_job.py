@@ -1,8 +1,17 @@
 import logging
-from telegram import Bot
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 import config
 
 logger = logging.getLogger(__name__)
+
+def _reminder_keyboard(job_id: str) -> InlineKeyboardMarkup:
+    """Build the standard Done/Snooze/Custom inline keyboard for a reminder message."""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Done", callback_data=f"done:{job_id}"),
+        InlineKeyboardButton("⏰ Snooze 30min", callback_data=f"snooze:{job_id}"),
+        InlineKeyboardButton("🕒 Custom time", callback_data=f"custom:{job_id}"),
+    ]])
+
 
 # Tracks the most recently triggered reminder for the single-user bot.
 # Used so the user can say "postpone" or "done" without specifying a job ID.
@@ -23,11 +32,9 @@ async def send_reminder(job_id: str, title: str, chat_id: int):
     try:
         await bot.send_message(
             chat_id=chat_id,
-            text=(
-                f"Reminder: *{title}*\n\n"
-                "Reply *done* to dismiss, or *postpone to [time]* to reschedule."
-            ),
+            text=f"Reminder: *{title}*",
             parse_mode="Markdown",
+            reply_markup=_reminder_keyboard(job_id),
         )
         logger.info("Sent reminder job_id=%s", job_id)
 
@@ -50,11 +57,9 @@ async def send_followup_check(job_id: str, title: str, chat_id: int):
     try:
         await bot.send_message(
             chat_id=chat_id,
-            text=(
-                f"Still pending: *{title}*\n\n"
-                "Reply *done* to dismiss, or *postpone to [time]* to reschedule."
-            ),
+            text=f"Still pending: *{title}*",
             parse_mode="Markdown",
+            reply_markup=_reminder_keyboard(job_id),
         )
         logger.info("Sent follow-up check job_id=%s", job_id)
     except Exception:

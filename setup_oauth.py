@@ -8,14 +8,17 @@ It will open a browser for consent, then print a JSON string.
 Copy that string into the GOOGLE_TOKEN_JSON environment variable (Railway secret).
 """
 import json
+import os
 from google_auth_oauthlib.flow import InstalledAppFlow
 
 SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
 
 
 def main():
-    # Expects credentials.json downloaded from Google Cloud Console
-    flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
+    # Expects client_secret.json at ~/.config/reminderbot/client_secret.json
+    flow = InstalledAppFlow.from_client_secrets_file(
+        os.path.expanduser("~/.config/reminderbot/client_secret.json"), SCOPES
+    )
     creds = flow.run_local_server(port=0)
 
     token_data = json.loads(creds.to_json())

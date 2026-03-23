@@ -1,6 +1,9 @@
 import logging
+from datetime import datetime, timedelta
+
+import pytz
 from telegram import Update
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, ConversationHandler, CallbackQueryHandler
 
 import config
 from bot.parser import (
@@ -14,7 +17,10 @@ from bot.parser import (
 from bot.scheduler import schedule_reminder, cancel_reminder, list_reminders, reschedule_reminder, cancel_followup
 from bot.calendar_client import create_event
 from bot.reminder_job import get_last_active
-from db.models import get_session, Reminder
+from db.models import get_session, Reminder, get_reminder_by_job_id
+
+# ConversationHandler state for custom postpone flow
+WAITING_CUSTOM_TIME = 1
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +83,7 @@ async def _handle_reminder(update: Update, text: str) -> None:
         return
 
     job_id = schedule_reminder(title=title, scheduled_at=dt, original_text=text)
-    time_str = dt.strftime("%A, %b %d at %I:%M %p")
+    time_str = dt.strftime("%A, %b %d at %I:%M %p %Z")
     await update.message.reply_text(
         f"Got it! I'll remind you to *{title}* on {time_str}.",
         parse_mode="Markdown",
@@ -94,7 +100,7 @@ async def _handle_calendar_only(update: Update, text: str) -> None:
         return
 
     event_id = create_event(title, dt)
-    time_str = dt.strftime("%A, %b %d at %I:%M %p")
+    time_str = dt.strftime("%A, %b %d at %I:%M %p %Z")
     if event_id:
         await update.message.reply_text(
             f"Added *{title}* to your Google Calendar on {time_str}.",
@@ -132,8 +138,8 @@ async def _handle_calendar_and_reminder(update: Update, text: str) -> None:
                 row.calendar_event_id = event_id
                 session.commit()
 
-    event_str = event_dt.strftime("%A, %b %d at %I:%M %p")
-    remind_str = reminder_dt.strftime("%A, %b %d at %I:%M %p")
+    event_str = event_dt.strftime("%A, %b %d at %I:%M %p %Z")
+    remind_str = reminder_dt.strftime("%A, %b %d at %I:%M %p %Z")
     cal_note = " Added to Google Calendar." if event_id else " (Calendar event failed.)"
     offset_note = f" I'll remind you at {remind_str}." if offset else ""
 
@@ -173,7 +179,7 @@ async def _handle_postpone(update: Update, text: str) -> None:
         title=last["title"],
         new_dt=new_dt,
     )
-    time_str = new_dt.strftime("%A, %b %d at %I:%M %p")
+    time_str = new_dt.strftime("%A, %b %d at %I:%M %p %Z")
     await update.message.reply_text(
         f"Rescheduled *{last['title']}* to {time_str}.",
         parse_mode="Markdown",
@@ -192,7 +198,7 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     lines = []
     for r in reminders:
-        time_str = r.scheduled_at.strftime("%b %d, %Y %I:%M %p")
+        time_str = r.scheduled_at.strftime("%b %d, %Y %I:%M %p %Z")
         lines.append(f"• *{r.title}* — {time_str}\n  ID: `{r.job_id}`")
 
     await update.message.reply_text("\n\n".join(lines), parse_mode="Markdown")
@@ -231,9 +237,86 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "*Set a reminder:*\n_Remind me to call mom tomorrow at 3pm_\n\n"
         "*Add to calendar:*\n_Dentist March 20 at 4pm, add to my calendar_\n\n"
         "*Reminder + calendar:*\n_Dentist March 20 at 4pm, add to my calendar and remind me an hour earlier_\n\n"
-        "When a reminder fires, reply *done* to dismiss or *postpone to [time]* to reschedule.\n\n"
+        "When a reminder fires, use the buttons to dismiss, snooze, or reschedule.\n"
+        "You can also reply *done* or *postpone to [time]* as text.\n\n"
         "Commands:\n"
         "/list — view all reminders\n"
         "/cancel <id> — cancel a reminder",
         parse_mode="Markdown",
     )
+
+
+# --- Inline keyboard callback handlers ---
+
+async def handle_done_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle ✅ Done button: cancel follow-up, remove DB row, collapse message."""
+    query = update.callback_query
+    await query.answer()
+    job_id = query.data.split(":", 1)[1]
+    cancel_reminder(job_id)
+    await query.edit_message_text("✅ Dismissed.")
+
+
+async def handle_snooze_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle ⏰ Snooze 30min button: reschedule to now+30min in user's timezone."""
+    query = update.callback_query
+    await query.answer()
+    job_id = query.data.split(":", 1)[1]
+
+    row = get_reminder_by_job_id(job_id)
+    if not row:
+        await query.edit_message_text("Reminder not found — already dismissed?")
+        return
+
+    tz = pytz.timezone(config.TIMEZONE)
+    new_dt = datetime.now(tz) + timedelta(minutes=30)
+    reschedule_reminder(old_job_id=job_id, title=row.title, new_dt=new_dt)
+    time_str = new_dt.strftime("%I:%M %p %Z")
+    await query.edit_message_text(
+        f"⏰ Snoozed — I'll remind you about *{row.title}* at {time_str}.",
+        parse_mode="Markdown",
+    )
+
+
+async def handle_custom_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Entry point for custom reschedule: store job context and prompt for new time."""
+    query = update.callback_query
+    await query.answer()
+    job_id = query.data.split(":", 1)[1]
+
+    row = get_reminder_by_job_id(job_id)
+    if not row:
+        await query.edit_message_text("Reminder not found.")
+        return ConversationHandler.END
+
+    context.user_data["postpone_job_id"] = job_id
+    context.user_data["postpone_title"] = row.title
+    await query.edit_message_reply_markup(reply_markup=None)  # clear buttons
+    await query.message.reply_text("When should I reschedule? (e.g. 'tomorrow at 5pm')")
+    return WAITING_CUSTOM_TIME
+
+
+async def handle_custom_time_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Receive the user's typed time and reschedule the reminder."""
+    job_id = context.user_data.get("postpone_job_id")
+    title = context.user_data.get("postpone_title")
+
+    if not job_id or not title:
+        await update.message.reply_text("Something went wrong. Tap the button again.")
+        return ConversationHandler.END
+
+    new_dt = parse_postpone_time(update.message.text)
+    if new_dt is None:
+        await update.message.reply_text(
+            "Couldn't parse that time. Try again (e.g. 'tomorrow at 5pm') or /cancel."
+        )
+        return WAITING_CUSTOM_TIME  # keep conversation alive for retry
+
+    reschedule_reminder(old_job_id=job_id, title=title, new_dt=new_dt)
+    time_str = new_dt.strftime("%A, %b %d at %I:%M %p %Z")
+    await update.message.reply_text(
+        f"Rescheduled *{title}* to {time_str}.", parse_mode="Markdown"
+    )
+    context.user_data.pop("postpone_job_id", None)
+    context.user_data.pop("postpone_title", None)
+    return ConversationHandler.END

@@ -1,4 +1,6 @@
-# reminder_bot — Project Context
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## What This Is
 A personal Telegram bot that:
@@ -20,7 +22,17 @@ A personal Telegram bot that:
 - Single-user bot — all handlers reject unknown user IDs
 - No LLM for parsing — dateparser + keyword matching only
 - Never write persistent state to local files — Railway filesystem is ephemeral
-- `bot/reminder_job.py` function `send_reminder` must never be renamed/moved — APScheduler serializes it by import path
+- `bot/reminder_job.py::send_reminder` must never be renamed or moved — APScheduler serializes job references by import path; renaming breaks deserialization of persisted jobs
+
+## Commands
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env   # fill in values
+python main.py         # run locally
+
+python setup_oauth.py  # one-time: generate GOOGLE_TOKEN_JSON env var value
+```
 
 ## Environment Variables
 ```
@@ -31,27 +43,50 @@ TIMEZONE=             # e.g. America/Chicago
 DATABASE_URL=         # injected by Railway; use sqlite:///./reminders.db locally
 ```
 
-## Local Development
-```bash
-pip install -r requirements.txt
-cp .env.example .env   # fill in values
-python main.py
-```
+## Architecture
+
+### Startup sequence (`main.py`)
+`init_db()` → `init_scheduler()` → register handlers → `run_polling()`
+
+### Message routing (`bot/handlers.py`)
+Plain text messages are routed by `handle_message` in priority order:
+1. "done"/"dismiss" → cancel the follow-up job for the last active reminder
+2. Postpone intent → reschedule last active reminder to a new time
+3. Calendar + reminder intent → create Calendar event at event time, schedule Telegram reminder with optional offset
+4. Reminder only → schedule Telegram reminder
+5. Calendar only → create Calendar event, no reminder
+
+### Dual persistence model
+Each reminder is stored in two places that must stay in sync:
+- **APScheduler job store** (in the `apscheduler_jobs` table via SQLAlchemyJobStore) — drives the actual job execution
+- **`reminders` table** (via `db/models.py`) — stores human-readable metadata (title, original text, scheduled time, calendar event ID)
+
+`cancel_reminder` and `reschedule_reminder` in `bot/scheduler.py` always clean up both.
+
+### Follow-up job pattern
+When `send_reminder` fires, it immediately schedules a `followup_{job_id}` interval job (every 30 min) via `schedule_followup`. Replying "done" or "postpone" calls `cancel_followup` to stop it. This avoids a circular import: `reminder_job.py` imports `schedule_followup` lazily inside the function body.
+
+### `_last_active` state
+`bot/reminder_job.py` holds an in-memory dict `_last_active` tracking the most recently fired reminder. This is what allows the user to say "done" or "postpone" without a job ID. It is process-local — not persisted.
+
+### Natural language parsing (`bot/parser.py`)
+- Intent detection: regex patterns (`_REMIND_PATTERNS`, `_CALENDAR_PATTERNS`, `_POSTPONE_PATTERNS`)
+- Datetime extraction: `dateparser.search.search_dates` with `PREFER_DATES_FROM: future` and the configured `TIMEZONE`
+- Time offset: `_OFFSET_PATTERNS` extracts phrases like "an hour earlier" → `timedelta` subtracted from event time
+
+### Google Calendar (`bot/calendar_client.py`)
+Reads credentials from `GOOGLE_TOKEN_JSON` (a JSON string). `setup_oauth.py` performs the OAuth flow locally and prints the token JSON to copy into the env var.
+
+## Bot Commands
+| Command | Behaviour |
+|---------|-----------|
+| `/start` | Help message with examples |
+| `/list` | Show all pending reminders with job IDs |
+| `/cancel <job_id>` | Remove reminder + its Calendar event if linked |
+| `done` / `dismiss` | Dismiss last active reminder (stops follow-ups) |
+| `postpone to <time>` | Reschedule last active reminder |
 
 ## Deploy
-- Hosted on Railway as a worker process (see Procfile)
-- Attach Railway Postgres plugin — DATABASE_URL is injected automatically
-- Run setup_oauth.py locally once to generate GOOGLE_TOKEN_JSON
-
-## Module Overview
-| File | Responsibility |
-|------|---------------|
-| `main.py` | Entry point: init DB → start scheduler → run bot |
-| `config.py` | Load and expose all env vars |
-| `bot/handlers.py` | Telegram message/command handlers |
-| `bot/parser.py` | Intent detection + datetime extraction |
-| `bot/scheduler.py` | APScheduler init + schedule/cancel helpers |
-| `bot/reminder_job.py` | Function APScheduler calls to send reminders |
-| `bot/calendar_client.py` | Google Calendar API wrapper |
-| `db/models.py` | SQLAlchemy Reminder table |
-| `setup_oauth.py` | One-time local script to generate Google OAuth token |
+- Hosted on Railway as a worker process (see `Procfile`)
+- Attach Railway Postgres plugin — `DATABASE_URL` is injected automatically
+- Run `setup_oauth.py` locally once to generate `GOOGLE_TOKEN_JSON`

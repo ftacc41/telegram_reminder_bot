@@ -31,3 +31,12 @@ def init_db():
 def get_session() -> Session:
     """Return a new SQLAlchemy session."""
     return Session(engine)
+
+
+def get_reminder_by_job_id(job_id: str) -> "Reminder | None":
+    """Fetch a Reminder row by job_id, expunged for safe use outside the session."""
+    with get_session() as session:
+        row = session.query(Reminder).filter_by(job_id=job_id).first()
+        if row:
+            session.expunge(row)
+        return row

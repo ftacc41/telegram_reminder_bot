@@ -108,7 +108,10 @@ def parse_reminder(text: str) -> "tuple":
         return None, None
 
     time_phrase, dt = results[-1]
+    dt = dt.astimezone(pytz.timezone(config.TIMEZONE))
     title = body_clean.replace(time_phrase, "").strip().rstrip(".,!? ")
+    title = re.sub(r'\s+(at|on|by|to|in|for|and|or)\s*$', '', title, flags=re.IGNORECASE).strip()
+    title = re.sub(r'^(at|on|by|to|in|for)\s+', '', title, flags=re.IGNORECASE).strip()
 
     # Apply reminder offset if present (e.g. "an hour earlier")
     offset = parse_time_offset(text)
@@ -139,7 +142,10 @@ def parse_event_time(text: str) -> "tuple":
         return None, None
 
     time_phrase, dt = results[-1]
+    dt = dt.astimezone(pytz.timezone(config.TIMEZONE))
     title = body.replace(time_phrase, "").strip().rstrip(".,!? ")
+    title = re.sub(r'\s+(at|on|by|to|in|for|and|or)\s*$', '', title, flags=re.IGNORECASE).strip()
+    title = re.sub(r'^(at|on|by|to|in|for)\s+', '', title, flags=re.IGNORECASE).strip()
     return title, dt
 
 
@@ -161,4 +167,5 @@ def parse_postpone_time(text: str) -> "datetime | None":
         return None
 
     _, dt = results[-1]
+    dt = dt.astimezone(pytz.timezone(config.TIMEZONE))
     return dt
