@@ -50,7 +50,7 @@ DATABASE_URL=         # injected by Railway; use sqlite:///./reminders.db locall
 
 ### Message routing (`bot/handlers.py`)
 Plain text messages are routed by `handle_message` in priority order:
-1. "done"/"dismiss" → cancel the follow-up job for the last active reminder
+1. "done"/"dismiss"/"completed"/"finished" → cancel the follow-up job for the last active reminder
 2. Postpone intent → reschedule last active reminder to a new time
 3. Calendar + reminder intent → create Calendar event at event time, schedule Telegram reminder with optional offset
 4. Reminder only → schedule Telegram reminder
@@ -63,8 +63,11 @@ Each reminder is stored in two places that must stay in sync:
 
 `cancel_reminder` and `reschedule_reminder` in `bot/scheduler.py` always clean up both.
 
+### Inline button flow
+`send_reminder` and `send_followup_check` attach a three-button keyboard to every reminder message (callback patterns: `done:<job_id>`, `snooze:<job_id>`, `custom:<job_id>`). The `custom:` button starts a `ConversationHandler` flow (`WAITING_CUSTOM_TIME` state) that prompts for a typed time, parses it, and calls `reschedule_reminder`. This `ConversationHandler` must be registered **before** the catch-all `MessageHandler` in `main.py`.
+
 ### Follow-up job pattern
-When `send_reminder` fires, it immediately schedules a `followup_{job_id}` interval job (every 30 min) via `schedule_followup`. Replying "done" or "postpone" calls `cancel_followup` to stop it. This avoids a circular import: `reminder_job.py` imports `schedule_followup` lazily inside the function body.
+When `send_reminder` fires, it immediately schedules a `followup_{job_id}` interval job (every 30 min) via `schedule_followup`; each tick calls `send_followup_check` (not `send_reminder`). Replying "done" or "postpone" calls `cancel_followup` to stop it. This avoids a circular import: `reminder_job.py` imports `schedule_followup` lazily inside the function body.
 
 ### `_last_active` state
 `bot/reminder_job.py` holds an in-memory dict `_last_active` tracking the most recently fired reminder. This is what allows the user to say "done" or "postpone" without a job ID. It is process-local — not persisted.
@@ -83,7 +86,7 @@ Reads credentials from `GOOGLE_TOKEN_JSON` (a JSON string). `setup_oauth.py` per
 | `/start` | Help message with examples |
 | `/list` | Show all pending reminders with job IDs |
 | `/cancel <job_id>` | Remove reminder + its Calendar event if linked |
-| `done` / `dismiss` | Dismiss last active reminder (stops follow-ups) |
+| `done` / `dismiss` / `completed` / `finished` | Dismiss last active reminder (stops follow-ups) |
 | `postpone to <time>` | Reschedule last active reminder |
 
 ## Deploy

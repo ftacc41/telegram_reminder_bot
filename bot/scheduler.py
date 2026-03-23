@@ -1,4 +1,5 @@
-import uuid
+import random
+import string
 import logging
 from datetime import datetime
 from typing import Optional
@@ -14,6 +15,11 @@ from bot.reminder_job import send_reminder, send_followup_check
 logger = logging.getLogger(__name__)
 
 _scheduler: Optional[AsyncIOScheduler] = None
+
+
+def _new_job_id() -> str:
+    """Generate a short 8-char alphanumeric job ID."""
+    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
 
 
 def get_scheduler() -> AsyncIOScheduler:
@@ -43,7 +49,7 @@ def schedule_reminder(title: str, scheduled_at: datetime, original_text: str) ->
     if scheduled_at.tzinfo is None:
         scheduled_at = tz.localize(scheduled_at)
 
-    job_id = str(uuid.uuid4())
+    job_id = _new_job_id()
     get_scheduler().add_job(
         send_reminder,
         trigger="date",
@@ -65,6 +71,43 @@ def schedule_reminder(title: str, scheduled_at: datetime, original_text: str) ->
         session.commit()
 
     logger.info("Scheduled reminder job_id=%s at %s", job_id, scheduled_at)
+    return job_id
+
+
+def schedule_recurring_reminder(
+    title: str, cron_kwargs: dict, hour: int, minute: int, original_text: str
+) -> str:
+    """Schedule a cron-based recurring reminder. Returns job_id."""
+    tz = pytz.timezone(config.TIMEZONE)
+    job_id = _new_job_id()
+
+    get_scheduler().add_job(
+        send_reminder,
+        trigger="cron",
+        hour=hour,
+        minute=minute,
+        **cron_kwargs,
+        kwargs={"job_id": job_id, "title": title, "chat_id": config.USER_CHAT_ID},
+        id=job_id,
+        replace_existing=True,
+        timezone=tz,
+    )
+
+    job = get_scheduler().get_job(job_id)
+    next_run = job.next_run_time if job else datetime.now(tz)
+
+    with get_session() as session:
+        session.add(
+            Reminder(
+                job_id=job_id,
+                title=title,
+                scheduled_at=next_run,
+                original_text=original_text,
+            )
+        )
+        session.commit()
+
+    logger.info("Scheduled recurring reminder job_id=%s cron=%s %02d:%02d", job_id, cron_kwargs, hour, minute)
     return job_id
 
 

@@ -13,8 +13,9 @@ from bot.parser import (
     parse_reminder,
     parse_event_time,
     parse_postpone_time,
+    parse_recurrence_reminder,
 )
-from bot.scheduler import schedule_reminder, cancel_reminder, list_reminders, reschedule_reminder, cancel_followup
+from bot.scheduler import schedule_reminder, schedule_recurring_reminder, cancel_reminder, list_reminders, reschedule_reminder, cancel_followup
 from bot.calendar_client import create_event
 from bot.reminder_job import get_last_active
 from db.models import get_session, Reminder, get_reminder_by_job_id
@@ -74,7 +75,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def _handle_reminder(update: Update, text: str) -> None:
-    """Schedule a reminder with no calendar event."""
+    """Schedule a reminder (one-off or recurring) with no calendar event."""
+    # Check for recurring intent first
+    rec = parse_recurrence_reminder(text)
+    if rec:
+        title, cron_kwargs, label, hour, minute = rec
+        job_id = schedule_recurring_reminder(
+            title=title, cron_kwargs=cron_kwargs, hour=hour, minute=minute, original_text=text
+        )
+        tz = pytz.timezone(config.TIMEZONE)
+        t = datetime.now(tz).replace(hour=hour, minute=minute, second=0, microsecond=0)
+        time_str = t.strftime("%I:%M %p %Z")
+        await update.message.reply_text(
+            f"Got it! I'll remind you to *{title}* {label} at {time_str}.\n"
+            f"Cancel: `/cancel {job_id}`",
+            parse_mode="Markdown",
+        )
+        return
+
     title, dt = parse_reminder(text)
     if dt is None:
         await update.message.reply_text(
@@ -85,7 +103,8 @@ async def _handle_reminder(update: Update, text: str) -> None:
     job_id = schedule_reminder(title=title, scheduled_at=dt, original_text=text)
     time_str = dt.strftime("%A, %b %d at %I:%M %p %Z")
     await update.message.reply_text(
-        f"Got it! I'll remind you to *{title}* on {time_str}.",
+        f"Got it! I'll remind you to *{title}* on {time_str}.\n"
+        f"Cancel: `/cancel {job_id}`",
         parse_mode="Markdown",
     )
 
@@ -144,7 +163,8 @@ async def _handle_calendar_and_reminder(update: Update, text: str) -> None:
     offset_note = f" I'll remind you at {remind_str}." if offset else ""
 
     await update.message.reply_text(
-        f"*{title}* scheduled for {event_str}.{cal_note}{offset_note}",
+        f"*{title}* scheduled for {event_str}.{cal_note}{offset_note}\n"
+        f"Cancel reminder: `/cancel {job_id}`",
         parse_mode="Markdown",
     )
 
@@ -181,7 +201,8 @@ async def _handle_postpone(update: Update, text: str) -> None:
     )
     time_str = new_dt.strftime("%A, %b %d at %I:%M %p %Z")
     await update.message.reply_text(
-        f"Rescheduled *{last['title']}* to {time_str}.",
+        f"Rescheduled *{last['title']}* to {time_str}.\n"
+        f"Cancel: `/cancel {new_job_id}`",
         parse_mode="Markdown",
     )
 
@@ -270,10 +291,11 @@ async def handle_snooze_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     tz = pytz.timezone(config.TIMEZONE)
     new_dt = datetime.now(tz) + timedelta(minutes=30)
-    reschedule_reminder(old_job_id=job_id, title=row.title, new_dt=new_dt)
+    new_job_id = reschedule_reminder(old_job_id=job_id, title=row.title, new_dt=new_dt)
     time_str = new_dt.strftime("%I:%M %p %Z")
     await query.edit_message_text(
-        f"⏰ Snoozed — I'll remind you about *{row.title}* at {time_str}.",
+        f"⏰ Snoozed — I'll remind you about *{row.title}* at {time_str}.\n"
+        f"Cancel: `/cancel {new_job_id}`",
         parse_mode="Markdown",
     )
 
@@ -312,10 +334,11 @@ async def handle_custom_time_input(update: Update, context: ContextTypes.DEFAULT
         )
         return WAITING_CUSTOM_TIME  # keep conversation alive for retry
 
-    reschedule_reminder(old_job_id=job_id, title=title, new_dt=new_dt)
+    new_job_id = reschedule_reminder(old_job_id=job_id, title=title, new_dt=new_dt)
     time_str = new_dt.strftime("%A, %b %d at %I:%M %p %Z")
     await update.message.reply_text(
-        f"Rescheduled *{title}* to {time_str}.", parse_mode="Markdown"
+        f"Rescheduled *{title}* to {time_str}.\nCancel: `/cancel {new_job_id}`",
+        parse_mode="Markdown",
     )
     context.user_data.pop("postpone_job_id", None)
     context.user_data.pop("postpone_title", None)

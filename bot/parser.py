@@ -28,6 +28,22 @@ _OFFSET_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+# Recurring schedule phrases like "every weekday", "every Monday", "daily"
+_RECURRENCE_PATTERNS = re.compile(
+    r"\bevery\s+(weekdays?|weekends?|day|"
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
+    r"mon|tue|wed|thu|fri|sat|sun)\b"
+    r"|\bdaily\b",
+    re.IGNORECASE,
+)
+
+_DAY_MAP = {
+    'monday': 'mon', 'tuesday': 'tue', 'wednesday': 'wed',
+    'thursday': 'thu', 'friday': 'fri', 'saturday': 'sat', 'sunday': 'sun',
+    'mon': 'mon', 'tue': 'tue', 'wed': 'wed',
+    'thu': 'thu', 'fri': 'fri', 'sat': 'sat', 'sun': 'sun',
+}
+
 # Keywords that signal a postpone/reschedule intent
 _POSTPONE_PATTERNS = re.compile(
     r"\b(postpone|move|reschedule|snooze|delay|push\s+back|push\s+it)\b",
@@ -147,6 +163,75 @@ def parse_event_time(text: str) -> "tuple":
     title = re.sub(r'\s+(at|on|by|to|in|for|and|or)\s*$', '', title, flags=re.IGNORECASE).strip()
     title = re.sub(r'^(at|on|by|to|in|for)\s+', '', title, flags=re.IGNORECASE).strip()
     return title, dt
+
+
+def parse_recurrence(text: str) -> "tuple[dict, str] | None":
+    """
+    Detect a recurring schedule in text (e.g. 'every weekday', 'every Monday', 'daily').
+    Returns (cron_kwargs, human_label) or None.
+    """
+    match = _RECURRENCE_PATTERNS.search(text)
+    if not match:
+        return None
+
+    full = match.group(0).lower()
+    token = (match.group(1) or '').lower()
+
+    if token in ('weekday', 'weekdays'):
+        return {'day_of_week': 'mon-fri'}, 'every weekday'
+    if token in ('weekend', 'weekends'):
+        return {'day_of_week': 'sat,sun'}, 'every weekend'
+    if token == 'day' or full == 'daily':
+        return {'day_of_week': '*'}, 'every day'
+    day = _DAY_MAP.get(token)
+    if day:
+        return {'day_of_week': day}, f'every {token.capitalize()}'
+    return None
+
+
+def parse_recurrence_reminder(text: str) -> "tuple[str, dict, str, int, int] | None":
+    """
+    Parse a recurring reminder message.
+    Returns (title, cron_kwargs, label, hour, minute) or None if not a recurrence message.
+    """
+    rec = parse_recurrence(text)
+    if not rec:
+        return None
+    cron_kwargs, label = rec
+
+    settings = {
+        'PREFER_DATES_FROM': 'future',
+        'RETURN_AS_TIMEZONE_AWARE': True,
+        'TIMEZONE': config.TIMEZONE,
+    }
+
+    # Strip recurrence phrase, then intent phrase, to isolate the task + time
+    body = _RECURRENCE_PATTERNS.sub('', text).strip()
+    intent_match = re.search(
+        r"\b(remind(er)?(\s+me)?\s+(to\s+)?|alert(\s+me)?\s+(to\s+)?|"
+        r"notify(\s+me)?\s+(to\s+)?|don't let me forget\s+(to\s+)?|set (a\s+)?reminder\s+(to\s+)?)",
+        body, re.IGNORECASE,
+    )
+    if intent_match:
+        body = body[intent_match.end():]
+
+    results = dateparser.search.search_dates(body, settings=settings)
+    if not results:
+        results = dateparser.search.search_dates(text, settings=settings)
+    if not results:
+        return None
+
+    time_phrase, dt = results[-1]
+    dt = dt.astimezone(pytz.timezone(config.TIMEZONE))
+    hour, minute = dt.hour, dt.minute
+
+    title = body.replace(time_phrase, '').strip().rstrip('.,!? ')
+    title = re.sub(r'\s+(at|on|by|to|in|for|and|or)\s*$', '', title, flags=re.IGNORECASE).strip()
+    title = re.sub(r'^(at|on|by|to|in|for)\s+', '', title, flags=re.IGNORECASE).strip()
+    if not title:
+        title = 'reminder'
+
+    return title, cron_kwargs, label, hour, minute
 
 
 def parse_postpone_time(text: str) -> "datetime | None":
