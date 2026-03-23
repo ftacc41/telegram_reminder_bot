@@ -91,11 +91,16 @@ python main.py
 
 | Input | What happens |
 |-------|-------------|
-| `Remind me to call mom tomorrow at 3pm` | Sets a Telegram reminder |
+| `Remind me to call mom tomorrow at 3pm` | Sets a one-off Telegram reminder |
+| `Remind me every weekday to do wrist exercises at 10am` | Sets a recurring reminder (Mon–Fri) |
+| `Remind me every Monday at 9am to review emails` | Sets a weekly recurring reminder |
+| `Daily standup reminder at 9:30am` | Recurring every day |
 | `Dentist March 20 at 4pm, add to my calendar` | Creates a Google Calendar event |
 | `Dentist March 20 at 4pm, add to my calendar and remind me an hour earlier` | Calendar event at 4pm + reminder at 3pm |
-| `/list` | Show all pending reminders |
+| `/list` | Show all pending reminders with IDs |
 | `/cancel <id>` | Cancel a reminder (and its calendar event if linked) |
+
+Every confirmation reply includes the job ID so you can cancel immediately, e.g. `Cancel: /cancel ab3x9k7m`.
 
 When a reminder fires, tap the inline buttons to dismiss, snooze 30 minutes, or enter a custom reschedule time. Text replies `done` and `postpone to [time]` also work as fallbacks.
 
