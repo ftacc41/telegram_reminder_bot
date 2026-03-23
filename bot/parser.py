@@ -199,13 +199,7 @@ def parse_recurrence_reminder(text: str) -> "tuple[str, dict, str, int, int] | N
         return None
     cron_kwargs, label = rec
 
-    settings = {
-        'PREFER_DATES_FROM': 'future',
-        'RETURN_AS_TIMEZONE_AWARE': True,
-        'TIMEZONE': config.TIMEZONE,
-    }
-
-    # Strip recurrence phrase, then intent phrase, to isolate the task + time
+    # Strip recurrence + intent phrase to isolate the task + time body
     body = _RECURRENCE_PATTERNS.sub('', text).strip()
     intent_match = re.search(
         r"\b(remind(er)?(\s+me)?\s+(to\s+)?|alert(\s+me)?\s+(to\s+)?|"
@@ -215,19 +209,29 @@ def parse_recurrence_reminder(text: str) -> "tuple[str, dict, str, int, int] | N
     if intent_match:
         body = body[intent_match.end():]
 
-    results = dateparser.search.search_dates(body, settings=settings)
-    if not results:
-        results = dateparser.search.search_dates(text, settings=settings)
-    if not results:
+    # Use a targeted regex to find the time string — search_dates misparses mixed text
+    # (e.g. "at 10am" gets read as month 10, "9am to" as month 9)
+    _TIME_RE = re.compile(r'\b(\d{1,2}(?::\d{2})?\s*[ap]m)\b|\b(\d{1,2}:\d{2})\b', re.IGNORECASE)
+    time_match = _TIME_RE.search(body) or _TIME_RE.search(text)
+    if not time_match:
         return None
 
-    time_phrase, dt = results[-1]
+    time_str = time_match.group(0)
+    settings = {'PREFER_DATES_FROM': 'future', 'RETURN_AS_TIMEZONE_AWARE': True, 'TIMEZONE': config.TIMEZONE}
+    dt = dateparser.parse(time_str, settings=settings)
+    if not dt:
+        return None
     dt = dt.astimezone(pytz.timezone(config.TIMEZONE))
     hour, minute = dt.hour, dt.minute
 
-    title = body.replace(time_phrase, '').strip().rstrip('.,!? ')
+    # Build title: remove "at <time>" or just <time> from body
+    title = re.sub(r'\bat\s+' + re.escape(time_str), '', body, flags=re.IGNORECASE)
+    if title == body:
+        title = re.sub(re.escape(time_str), '', body, flags=re.IGNORECASE)
+    title = title.strip().rstrip('.,!? ')
     title = re.sub(r'\s+(at|on|by|to|in|for|and|or)\s*$', '', title, flags=re.IGNORECASE).strip()
     title = re.sub(r'^(at|on|by|to|in|for)\s+', '', title, flags=re.IGNORECASE).strip()
+    title = re.sub(r'\s+', ' ', title).strip()
     if not title:
         title = 'reminder'
 
