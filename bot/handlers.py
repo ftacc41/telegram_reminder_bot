@@ -15,7 +15,7 @@ from bot.parser import (
     parse_postpone_time,
     parse_recurrence_reminder,
 )
-from bot.scheduler import schedule_reminder, schedule_recurring_reminder, cancel_reminder, list_reminders, reschedule_reminder, cancel_followup
+from bot.scheduler import schedule_reminder, schedule_recurring_reminder, cancel_reminder, list_reminders, reschedule_reminder, cancel_followup, get_scheduler
 from bot.calendar_client import create_event
 from bot.reminder_job import get_last_active
 from db.models import get_session, Reminder, get_reminder_by_job_id
@@ -247,6 +247,23 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text(f"Reminder `{job_id}` cancelled.", parse_mode="Markdown")
     else:
         await update.message.reply_text(f"No reminder found with ID `{job_id}`.", parse_mode="Markdown")
+
+
+async def cmd_clearjobs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /clearjobs — cancel ALL APScheduler jobs and clear the reminders table."""
+    if not _authorised(update):
+        return
+
+    scheduler = get_scheduler()
+    jobs = scheduler.get_jobs()
+    for job in jobs:
+        scheduler.remove_job(job.id)
+
+    with get_session() as session:
+        session.query(Reminder).delete()
+        session.commit()
+
+    await update.message.reply_text(f"Cleared {len(jobs)} job(s).")
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
