@@ -50,6 +50,13 @@ async def send_reminder(job_id: str, title: str, chat_id: int):
 
 async def send_followup_check(job_id: str, title: str, chat_id: int):
     """Send a follow-up check 30 minutes after a reminder fires."""
+    from db.models import get_reminder_by_job_id
+    from bot.scheduler import cancel_followup
+    if not get_reminder_by_job_id(job_id):
+        cancel_followup(job_id)
+        logger.info("Follow-up for dismissed/unknown job_id=%s — auto-cancelled", job_id)
+        return
+
     global _last_active
     _last_active = {"job_id": job_id, "title": title}
 
