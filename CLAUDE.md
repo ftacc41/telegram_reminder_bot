@@ -103,3 +103,7 @@ Reads credentials from `GOOGLE_TOKEN_JSON` (a JSON string). `setup_oauth.py` per
 - Hosted on Railway as a worker process (see `Procfile`)
 - Attach Railway Postgres plugin — `DATABASE_URL` is injected automatically
 - Run `setup_oauth.py` locally once to generate `GOOGLE_TOKEN_JSON`
+
+## Future Ideas
+- **Remove IDs from messages** — confirmation replies currently show job IDs (e.g. `Cancel: /cancel ab3x9k7m`). Since inline buttons cover most actions, explore hiding IDs from user-facing messages.
+- **Reminders survive deploys** — pending and recurring reminders get lost when the DB is reset after a code change. Explore a migration or soft-reset strategy that preserves existing reminders across deploys.
