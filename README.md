@@ -5,7 +5,7 @@ A personal Telegram bot that accepts natural language reminders, fires them at t
 **"Remind me to call the dentist tomorrow at 10am"**
 **"Dentist March 20 at 4pm, add to my calendar and remind me an hour earlier"**
 
-When a reminder fires you get inline buttons to dismiss it, snooze 30 minutes, or pick a custom time.
+When a reminder fires you get inline buttons to dismiss it, snooze 30 minutes, pick a custom time, or cancel it.
 
 ---
 
@@ -14,7 +14,7 @@ When a reminder fires you get inline buttons to dismiss it, snooze 30 minutes, o
 - Natural language scheduling via [dateparser](https://dateparser.readthedocs.io/)
 - Reminders persist across restarts (APScheduler + Postgres)
 - Google Calendar event creation with optional reminder offset
-- Inline keyboard buttons on every reminder: ✅ Done · ⏰ Snooze 30min · 🕒 Custom time
+- Inline keyboard buttons on every reminder: ✅ Done · ⏰ Snooze 30min · 🕒 Custom time · ❌ Cancel
 - Single-user — all messages from unknown Telegram IDs are silently ignored
 
 ---
@@ -97,8 +97,9 @@ python main.py
 | `Daily standup reminder at 9:30am` | Recurring every day |
 | `Dentist March 20 at 4pm, add to my calendar` | Creates a Google Calendar event |
 | `Dentist March 20 at 4pm, add to my calendar and remind me an hour earlier` | Calendar event at 4pm + reminder at 3pm |
-| `/list` | Show all pending reminders with IDs |
+| `/list` | Show all pending reminders, each with inline action buttons |
 | `/cancel <id>` | Cancel a reminder (and its calendar event if linked) |
+| `/clearjobs` | Cancel all scheduled jobs (use to clear stuck reminders) |
 
 Every confirmation reply includes the job ID so you can cancel immediately, e.g. `Cancel: /cancel ab3x9k7m`.
 
