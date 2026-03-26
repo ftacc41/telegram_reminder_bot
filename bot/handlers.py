@@ -17,7 +17,7 @@ from bot.parser import (
 )
 from bot.scheduler import schedule_reminder, schedule_recurring_reminder, cancel_reminder, list_reminders, reschedule_reminder, cancel_followup, get_scheduler
 from bot.calendar_client import create_event
-from bot.reminder_job import get_last_active
+from bot.reminder_job import get_last_active, _reminder_keyboard, _list_keyboard
 from db.models import get_session, Reminder, get_reminder_by_job_id
 
 # ConversationHandler state for custom postpone flow
@@ -217,12 +217,15 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("No reminders set.")
         return
 
-    lines = []
+    await update.message.reply_text(f"{len(reminders)} reminder(s) scheduled:")
+
     for r in reminders:
         time_str = r.scheduled_at.strftime("%b %d, %Y %I:%M %p %Z")
-        lines.append(f"• *{r.title}* — {time_str}\n  ID: `{r.job_id}`")
-
-    await update.message.reply_text("\n\n".join(lines), parse_mode="Markdown")
+        await update.message.reply_text(
+            f"*{r.title}*\n{time_str}",
+            parse_mode="Markdown",
+            reply_markup=_list_keyboard(r.job_id),
+        )
 
 
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -263,6 +266,12 @@ async def cmd_clearjobs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         session.query(Reminder).delete()
         session.commit()
 
+    from sqlalchemy import text
+    from db.models import engine as _engine
+    with _engine.connect() as conn:
+        conn.execute(text("DELETE FROM apscheduler_jobs"))
+        conn.commit()
+
     await update.message.reply_text(f"Cleared {len(jobs)} job(s).")
 
 
@@ -293,6 +302,15 @@ async def handle_done_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     job_id = query.data.split(":", 1)[1]
     cancel_reminder(job_id)
     await query.edit_message_text("✅ Dismissed.")
+
+
+async def handle_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle ❌ Cancel button: remove the scheduled reminder and collapse message."""
+    query = update.callback_query
+    await query.answer()
+    job_id = query.data.split(":", 1)[1]
+    cancel_reminder(job_id)
+    await query.edit_message_text("❌ Cancelled.")
 
 
 async def handle_snooze_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

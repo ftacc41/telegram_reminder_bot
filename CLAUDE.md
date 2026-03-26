@@ -32,6 +32,11 @@ cp .env.example .env   # fill in values
 python main.py         # run locally
 
 python setup_oauth.py  # one-time: generate GOOGLE_TOKEN_JSON env var value
+
+# Debugging utilities (connect to DATABASE_URL from .env)
+python test_parser.py           # test parser logic without Telegram/scheduler
+python list_jobs.py             # list all raw APScheduler jobs
+python list_jobs.py <job_id>    # cancel a specific job directly
 ```
 
 ## Environment Variables
@@ -72,8 +77,12 @@ When `send_reminder` fires, it immediately schedules a `followup_{job_id}` inter
 ### `_last_active` state
 `bot/reminder_job.py` holds an in-memory dict `_last_active` tracking the most recently fired reminder. This is what allows the user to say "done" or "postpone" without a job ID. It is process-local — not persisted.
 
+### Recurring reminders
+Phrases like "every day at 9am" or "every weekday at 10am" are detected by `parse_recurrence` and handled by `parse_recurrence_reminder`, which returns cron kwargs (e.g. `day_of_week`, `hour`, `minute`). `schedule_recurring_reminder` in `bot/scheduler.py` creates an APScheduler cron job with a `recurring_` prefix and a matching `reminders` row with `is_recurring=True`. Recurring jobs are not shown via `/list` (which only shows one-off pending reminders).
+
 ### Natural language parsing (`bot/parser.py`)
 - Intent detection: regex patterns (`_REMIND_PATTERNS`, `_CALENDAR_PATTERNS`, `_POSTPONE_PATTERNS`)
+- Recurrence detection: `parse_recurrence` / `parse_recurrence_reminder` handle "every day/weekday/Monday…" patterns before the one-off path
 - Datetime extraction: `dateparser.search.search_dates` with `PREFER_DATES_FROM: future` and the configured `TIMEZONE`
 - Time offset: `_OFFSET_PATTERNS` extracts phrases like "an hour earlier" → `timedelta` subtracted from event time
 
@@ -86,6 +95,7 @@ Reads credentials from `GOOGLE_TOKEN_JSON` (a JSON string). `setup_oauth.py` per
 | `/start` | Help message with examples |
 | `/list` | Show all pending reminders with job IDs |
 | `/cancel <job_id>` | Remove reminder + its Calendar event if linked |
+| `/clearjobs` | Cancel all APScheduler jobs (use to clear stuck jobs) |
 | `done` / `dismiss` / `completed` / `finished` | Dismiss last active reminder (stops follow-ups) |
 | `postpone to <time>` | Reschedule last active reminder |
 

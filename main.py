@@ -9,7 +9,7 @@ from db.models import init_db
 from bot.scheduler import init_scheduler
 from bot.handlers import (
     handle_message, cmd_list, cmd_cancel, cmd_start, cmd_clearjobs,
-    handle_done_callback, handle_snooze_callback,
+    handle_done_callback, handle_cancel_callback, handle_snooze_callback,
     handle_custom_start, handle_custom_time_input,
     WAITING_CUSTOM_TIME,
 )
@@ -35,6 +35,7 @@ def main() -> None:
 
     # Inline button callbacks (non-conversation)
     app.add_handler(CallbackQueryHandler(handle_done_callback, pattern=r"^done:"))
+    app.add_handler(CallbackQueryHandler(handle_cancel_callback, pattern=r"^cancel:"))
     app.add_handler(CallbackQueryHandler(handle_snooze_callback, pattern=r"^snooze:"))
 
     # ConversationHandler for custom time (must be before catch-all MessageHandler)

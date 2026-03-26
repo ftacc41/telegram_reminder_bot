@@ -13,6 +13,20 @@ def _reminder_keyboard(job_id: str) -> InlineKeyboardMarkup:
     ]])
 
 
+def _list_keyboard(job_id: str) -> InlineKeyboardMarkup:
+    """Build the full Done/Snooze/Custom/Cancel inline keyboard for the /list view."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Done", callback_data=f"done:{job_id}"),
+            InlineKeyboardButton("⏰ Snooze 30min", callback_data=f"snooze:{job_id}"),
+        ],
+        [
+            InlineKeyboardButton("🕒 Custom time", callback_data=f"custom:{job_id}"),
+            InlineKeyboardButton("❌ Cancel", callback_data=f"cancel:{job_id}"),
+        ],
+    ])
+
+
 # Tracks the most recently triggered reminder for the single-user bot.
 # Used so the user can say "postpone" or "done" without specifying a job ID.
 _last_active: dict = {"job_id": None, "title": None}
@@ -25,6 +39,11 @@ def get_last_active() -> dict:
 
 async def send_reminder(job_id: str, title: str, chat_id: int):
     """Send a reminder message via Telegram. Called by APScheduler — do not rename or move."""
+    from db.models import get_reminder_by_job_id
+    if not get_reminder_by_job_id(job_id):
+        logger.info("send_reminder: no DB row for job_id=%s — skipping", job_id)
+        return
+
     global _last_active
     _last_active = {"job_id": job_id, "title": title}
 

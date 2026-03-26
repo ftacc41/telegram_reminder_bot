@@ -9,7 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 
 import config
-from db.models import get_session, Reminder
+from db.models import get_session, Reminder, get_reminder_by_job_id
 from bot.reminder_job import send_reminder, send_followup_check
 
 logger = logging.getLogger(__name__)
@@ -20,6 +20,21 @@ _scheduler: Optional[AsyncIOScheduler] = None
 def _new_job_id() -> str:
     """Generate a short 8-char alphanumeric job ID."""
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+
+
+def _prune_orphaned_jobs(scheduler: AsyncIOScheduler) -> None:
+    """Remove any APScheduler jobs that have no matching row in the reminders table."""
+    for job in scheduler.get_jobs():
+        job_id = job.id
+        if job_id.startswith("followup_"):
+            base_id = job_id[len("followup_"):]
+            if not get_reminder_by_job_id(base_id):
+                scheduler.remove_job(job_id)
+                logger.info("Pruned orphaned follow-up job: %s", job_id)
+        else:
+            if not get_reminder_by_job_id(job_id):
+                scheduler.remove_job(job_id)
+                logger.info("Pruned orphaned job: %s", job_id)
 
 
 def get_scheduler() -> AsyncIOScheduler:
@@ -39,6 +54,7 @@ def init_scheduler() -> AsyncIOScheduler:
         job_defaults={"misfire_grace_time": 3600},
     )
     _scheduler.start()
+    _prune_orphaned_jobs(_scheduler)
     logger.info("Scheduler started (tz=%s)", config.TIMEZONE)
     return _scheduler
 
