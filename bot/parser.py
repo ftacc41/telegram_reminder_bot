@@ -28,6 +28,9 @@ _OFFSET_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+# Time pattern for recurring reminders: "10 am", "9:30 pm", etc.
+_HHMM_RE = re.compile(r'\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b', re.IGNORECASE)
+
 # Recurring schedule phrases like "every weekday", "every Monday", "daily"
 _RECURRENCE_PATTERNS = re.compile(
     r"\bevery\s+(weekdays?|weekends?|day|"
@@ -209,25 +212,23 @@ def parse_recurrence_reminder(text: str) -> "tuple[str, dict, str, int, int] | N
     if intent_match:
         body = body[intent_match.end():]
 
-    # Use a targeted regex to find the time string — search_dates misparses mixed text
-    # (e.g. "at 10am" gets read as month 10, "9am to" as month 9)
-    _TIME_RE = re.compile(r'\b(\d{1,2}(?::\d{2})?\s*[ap]m)\b|\b(\d{1,2}:\d{2})\b', re.IGNORECASE)
-    time_match = _TIME_RE.search(body) or _TIME_RE.search(text)
+    # Extract hour/minute directly — dateparser is unreliable for bare time strings
+    time_match = _HHMM_RE.search(body) or _HHMM_RE.search(text)
     if not time_match:
         return None
 
-    time_str = time_match.group(0)
-    settings = {'PREFER_DATES_FROM': 'future', 'RETURN_AS_TIMEZONE_AWARE': True, 'TIMEZONE': config.TIMEZONE}
-    dt = dateparser.parse(time_str, settings=settings)
-    if not dt:
-        return None
-    dt = dt.astimezone(pytz.timezone(config.TIMEZONE))
-    hour, minute = dt.hour, dt.minute
+    h = int(time_match.group(1))
+    m = int(time_match.group(2) or 0)
+    meridiem = time_match.group(3).lower()
+    if meridiem == 'pm' and h != 12:
+        h += 12
+    elif meridiem == 'am' and h == 12:
+        h = 0
+    hour, minute = h, m
 
-    # Build title: remove "at <time>" or just <time> from body
-    title = re.sub(r'\bat\s+' + re.escape(time_str), '', body, flags=re.IGNORECASE)
-    if title == body:
-        title = re.sub(re.escape(time_str), '', body, flags=re.IGNORECASE)
+    # Build title: strip "at <time>" or bare time using a generic pattern
+    title = re.sub(r'\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b', '', body, flags=re.IGNORECASE)
+    title = re.sub(r'\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b', '', title, flags=re.IGNORECASE)
     title = title.strip().rstrip('.,!? ')
     title = re.sub(r'\s+(at|on|by|to|in|for|and|or)\s*$', '', title, flags=re.IGNORECASE).strip()
     title = re.sub(r'^(at|on|by|to|in|for)\s+', '', title, flags=re.IGNORECASE).strip()
